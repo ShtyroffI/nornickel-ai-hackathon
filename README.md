@@ -1,0 +1,1 @@
+# nornickel-ai-hackathon
