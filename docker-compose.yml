@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: nornickel_knowledge
+      POSTGRES_USER: nornickel
+      POSTGRES_PASSWORD: nornickel
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  neo4j:
+    image: neo4j:5
+    environment:
+      NEO4J_AUTH: neo4j/neo4j
+      NEO4J_PLUGINS: '[]'
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file: .env
+    depends_on:
+      - postgres
+      - neo4j
+    ports:
+      - "8000:8000"
+
+  ui:
+    build: .
+    command: streamlit run ui/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+    env_file: .env
+    environment:
+      API_URL: http://api:8000/api/v1
+    depends_on:
+      - api
+    ports:
+      - "8501:8501"
+
+volumes:
+  postgres_data:
+  neo4j_data:
