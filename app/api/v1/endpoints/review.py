@@ -20,9 +20,10 @@ def review(
     result = analytics.generate_review(payload.topic, payload.group_by)
     return ReviewResponse(
         topic=result["topic"],
-        summary=f"Автообзор по теме: {payload.topic}",
+        summary=result.get("summary", ""),
         consensus=result["consensus"],
         disagreements=result["disagreements"],
+        sources=result["sources"],
         sources_count=result["sources_count"],
         confidence=result["confidence"],
     )

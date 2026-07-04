@@ -12,6 +12,7 @@ class QueryRequest(BaseModel):
 
 class QueryResponse(BaseModel):
     text: str
+    answer: str = ""
     sources: list[dict] = []
     subgraph: dict | None = None
     consensus: list[str] = []

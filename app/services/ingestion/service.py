@@ -31,9 +31,14 @@ class IngestionService:
         )
 
     def _read(self, p: Path) -> str:
-        if p.suffix.lower() in {".txt", ".md", ".html"}:
+        from app.utils.file_parsers import parse_file
+        
+        # Use our robust file parser which handles PDF, DOCX, TXT correctly
+        text = parse_file(p)
+        if not text:
+            # Fallback to direct read if parser fails or returns empty
             return p.read_text(encoding="utf-8", errors="ignore")
-        return p.read_text(encoding="utf-8", errors="ignore")
+        return text
 
     def _detect_language(self, text: str) -> str:
         cyrillic = sum(1 for c in text if "Ѐ" <= c <= "ӿ")

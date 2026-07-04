@@ -27,7 +27,8 @@ def query(
     result = search_service.search(payload.text, filters)
     return QueryResponse(
         text=payload.text,
-        sources=result.get("results", []),
+        answer=result.get("answer", ""),
+        sources=result.get("sources", []),
         consensus=[],
         disagreements=[],
         confidence=0.0,
