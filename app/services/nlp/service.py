@@ -1,75 +1,135 @@
-"""NLP-пайплайн: извлечение сущностей, связей, числовых ограничений, синонимов.
+"""Верхний уровень NLP-сервиса.
 
-Поддерживает провайдеры: stub (по умолчанию), spacy, deeppavlov.
-Реальные провайдеры подключаются позже — интерфейс уже зафиксирован.
+Содержит функции, которые:
+- читают файл (txt/docx/pdf) и достают текст;
+- прогоняют текст через словарные экстракторы;
+- собирают `ExtractionResult` с разнесёнными по полям сущностями (entities,
+  numbers, geography, years, experts) и тройками (triples).
+
+Глобальный пайплайн создаётся один раз и переиспользуется.
 """
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
+import logging
+from pathlib import Path
+
+from app.services.nlp.extractors import (
+    RelationExtractor,
+    get_default_pipeline,
+)
+
+from app.services.nlp.models import Entity, ExtractionResult, Triple
+from app.utils.file_parsers import parse_file
+
+logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ExtractedEntity:
-    type: str
-    name: str
-    value: float | None = None
-    unit: str | None = None
-    op: str | None = None
-    properties: dict = field(default_factory=dict)
+_extractors: list | None = None
+_resolver = None
+_relation_extractor: RelationExtractor | None = None
 
 
-@dataclass
-class ExtractedRelation:
-    source: str
-    target: str
-    type: str
-    properties: dict = field(default_factory=dict)
+def _init_pipeline() -> None:
+    global _extractors, _resolver, _relation_extractor
+    if _extractors is None:
+        _extractors, _resolver, _relation_extractor = get_default_pipeline()
 
 
-@dataclass
-class ExtractionResult:
-    entities: list[ExtractedEntity]
-    relations: list[ExtractedRelation]
+def _run_extractors(text: str) -> list[Entity]:
+    """Прогоняет текст через все экстракторы и схлопывает синонимы."""
+    _init_pipeline()
+    assert _extractors is not None and _resolver is not None
+    all_hits: list[Entity] = []
+    for ex in _extractors:
+        all_hits.extend(ex.extract(text))
+    return _resolver.collapse(all_hits)
 
 
-class NLPService:
-    SYNONYMS: dict[str, list[str]] = {
-        "электроэкстракция": ["electrowinning", "EW"],
-        "ПВП": ["печь взвешенной плавки", "fluidized bed furnace"],
-        "выщелачивание": ["leaching"],
-        "кучное выщелачивание": ["heap leaching"],
-    }
+def _dedup(entities: list[Entity]) -> list[Entity]:
+    seen: set[tuple[str, str]] = set()
+    unique: list[Entity] = []
+    for ent in entities:
+        key = (ent.text.lower(), ent.label)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(ent)
+    return unique
 
-    NUMERIC_RE = re.compile(
-        r"(?P<op><=|>=|<|>|≈)?\s*(?P<value>\d+[.,]?\d*)\s*(?P<unit>мг/л|г/л|°C|°C|т/сут|МПа|м/с)?"
+
+def extract_entities(text: str) -> list[Entity]:
+    """Словарные сущности (Process/Material/Equipment/Geography/Year/Expert).
+
+    Числовые ограничения сюда не попадают — они идут в `extract_numbers` /
+    `ExtractionResult.numbers`.
+    """
+    collapsed = _run_extractors(text)
+    return _dedup(
+        [e for e in collapsed if e.label != "numeric_constraint"]
     )
 
-    def extract(self, text: str, language: str = "ru") -> ExtractionResult:
-        entities: list[ExtractedEntity] = []
-        relations: list[ExtractedRelation] = []
 
-        for name, syns in self.SYNONYMS.items():
-            for term in (name, *syns):
-                if term.lower() in text.lower():
-                    entities.append(ExtractedEntity(type="Process" if "выщел" in term.lower() or "электр" in term.lower() else "Equipment", name=name))
-                    break
+def extract_numbers(text: str) -> list[Entity]:
+    """Числовые ограничения: «сульфаты ≤300 мг/л», «350 °C» и т.п."""
+    _init_pipeline()
+    assert _extractors is not None
+    numeric = next((ex for ex in _extractors if getattr(ex, "name", None) == "numeric"), None)
+    if numeric is None:
+        return []
+    return numeric.extract(text)
 
-        for match in self.NUMERIC_RE.finditer(text):
-            raw = match.group("value").replace(",", ".")
-            try:
-                value = float(raw)
-            except ValueError:
-                continue
-            entities.append(
-                ExtractedEntity(
-                    type="Property",
-                    name="numeric_constraint",
-                    value=value,
-                    unit=match.group("unit"),
-                    op=match.group("op") or "=",
-                )
-            )
 
-        return ExtractionResult(entities=entities, relations=relations)
+def extract_triples(text: str) -> list[Triple]:
+    """Тройки (субъект-предикат-объект) по шаблонам «X применяется для Y»."""
+    _init_pipeline()
+    assert _relation_extractor is not None
+    entities = extract_entities(text)
+    return _relation_extractor.extract(text, entities=entities)
+
+
+def _split_special_labels(entities: list[Entity]) -> dict[str, list[Entity]]:
+    special_labels = {"geography", "year", "expert"}
+    out: dict[str, list[Entity]] = {label: [] for label in special_labels}
+    filtered: list[Entity] = []
+    for e in entities:
+        if e.label in special_labels:
+            out[e.label].append(e)
+        else:
+            filtered.append(e)
+    return {**out, "_main": filtered}
+
+
+def _detect_language(text: str) -> str:
+    if not text:
+        return "ru"
+    cyrillic = sum(1 for c in text if "Ѐ" <= c <= "ӿ")
+    return "ru" if cyrillic > len(text) * 0.05 else "en"
+
+
+def extract_from_text(text: str) -> ExtractionResult:
+    """Полный прогон текста: сущности + числа + тройки."""
+    all_entities = extract_entities(text)
+    numbers = extract_numbers(text)
+    triples = extract_triples(text)
+
+    parts = _split_special_labels(all_entities)
+
+    return ExtractionResult(
+        entities=parts["_main"],
+        triples=triples,
+        numbers=numbers,
+        geography=parts["geography"],
+        years=parts["year"],
+        experts=parts["expert"],
+        source_text=text,
+        language=_detect_language(text),
+    )
+
+
+def extract_from_file(file_path: str | Path) -> ExtractionResult:
+    """Читает файл через `parse_file` и прогоняет через пайплайн."""
+    text = parse_file(file_path)
+    if not text:
+        logger.warning("Empty text from %s", file_path)
+    return extract_from_text(text)
