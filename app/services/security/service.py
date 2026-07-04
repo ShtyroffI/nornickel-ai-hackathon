@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -15,13 +15,12 @@ from app.models.sql.user import Role, User
 
 
 class SecurityService:
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
     def hash_password(self, password: str) -> str:
-        return self.pwd_context.hash(password)
+        salt = bcrypt.gensalt()
+        return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
     def verify_password(self, plain: str, hashed: str) -> bool:
-        return self.pwd_context.verify(plain, hashed)
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
     def create_access_token(self, subject: str, role: Role) -> tuple[str, int]:
         settings = get_settings()

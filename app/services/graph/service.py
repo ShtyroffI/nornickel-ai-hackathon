@@ -73,7 +73,24 @@ class GraphService:
 
     def neighborhood(self, entity_id: str, depth: int = 3) -> list[dict]:
         cypher = (
-            "MATCH path = (n {id: $id})-[*1.." + str(depth) + "]-(m) "
-            "RETURN n, relationships(path) AS rels, m LIMIT 500"
+            "MATCH (n {id: $id}) "
+            "OPTIONAL MATCH path = (n)-[*1.." + str(depth) + "]-(m) "
+            "RETURN n, labels(n) AS n_labels, m, labels(m) AS m_labels, "
+            "[rel IN relationships(path) | {start: startNode(rel).id, end: endNode(rel).id, type: type(rel), props: properties(rel)}] AS rels "
+            "LIMIT 500"
         )
         return self.driver.run(cypher, {"id": entity_id})
+
+    def search_neighborhood(self, query: str, depth: int = 2) -> list[dict]:
+        # Поиск узлов по подстроке в имени (регистронезависимо) и возврат их окрестности
+        # Исключаем связи described_in, чтобы не тянуть весь документ как суперузел и миллион чисел
+        cypher = (
+            "MATCH (n) WHERE toLower(n.name) CONTAINS toLower($query) AND NOT n:Publication "
+            "WITH n LIMIT 5 " # Берем топ-5 совпадений
+            "OPTIONAL MATCH path = (n)-[*1.." + str(depth) + "]-(m) "
+            "WHERE NONE(rel IN relationships(path) WHERE type(rel) = 'described_in') "
+            "RETURN n, labels(n) AS n_labels, m, labels(m) AS m_labels, "
+            "[rel IN relationships(path) | {start: startNode(rel).id, end: endNode(rel).id, type: type(rel), props: properties(rel)}] AS rels "
+            "LIMIT 500"
+        )
+        return self.driver.run(cypher, {"query": query})

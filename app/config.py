@@ -18,14 +18,17 @@ class Settings(BaseSettings):
 
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
-    neo4j_password: str = "neo4j"
+    neo4j_password: str = "nornickel"
 
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"
-    jwt_expires_minutes: int = 1440
+    jwt_expires_minutes: int = 60 * 24
 
     nlp_provider: str = "stub"
     log_level: str = "INFO"
+    
+    yandex_api_key: str = ""
+    yandex_folder_id: str = ""
 
     @property
     def postgres_dsn(self) -> str:

@@ -13,7 +13,7 @@ services:
   neo4j:
     image: neo4j:5
     environment:
-      NEO4J_AUTH: neo4j/neo4j
+      NEO4J_AUTH: neo4j/nornickel
       NEO4J_PLUGINS: '[]'
     ports:
       - "7474:7474"
@@ -25,6 +25,8 @@ services:
     build: .
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     env_file: .env
+    volumes:
+      - .:/app
     depends_on:
       - postgres
       - neo4j
@@ -35,6 +37,8 @@ services:
     build: .
     command: streamlit run ui/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
     env_file: .env
+    volumes:
+      - .:/app
     environment:
       API_URL: http://api:8000/api/v1
     depends_on:
