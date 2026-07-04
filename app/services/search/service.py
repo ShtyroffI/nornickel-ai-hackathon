@@ -92,47 +92,15 @@ class SearchService:
                 "filters": filters.__dict__,
                 "results": [],
                 "took_ms": 0,
-                "answer": "Не знаю.",
+                "answer": "К сожалению, в базе знаний нет данных по вашему запросу. Попробуйте переформулировать вопрос или загрузить соответствующие документы.",
             }
-
-        # Strict Python-level filter check for Hackathon MVP
-        if filters.geography:
-            geo = filters.geography.lower()
-            if geo not in context.lower():
-                return {
-                    "query": text,
-                    "filters": filters.__dict__,
-                    "results": [],
-                    "took_ms": 0,
-                    "answer": "Не знаю.",
-                }
-
-        if filters.year_from or filters.year_to:
-            import re
-            years_in_context = [int(y) for y in re.findall(r'\b(19\d{2}|20\d{2})\b', context)]
-            min_y = filters.year_from or 0
-            max_y = filters.year_to or 9999
-            
-            # If context mentions years, check them. If no years, it fails the strict year filter.
-            if not years_in_context or not any(min_y <= y <= max_y for y in years_in_context):
-                return {
-                    "query": text,
-                    "filters": filters.__dict__,
-                    "results": [],
-                    "took_ms": 0,
-                    "answer": "Не знаю.",
-                }
 
         prompt = f"""
         Используй следующие факты из базы знаний (представлены как фрагменты графа) для ответа на вопрос.
+        Пользователь установил фильтры для поиска: География: {filters.geography if filters.geography else 'Любая'}, Период: с {filters.year_from if filters.year_from else 'любого года'} по {filters.year_to if filters.year_to else 'любой год'}
         
-        ВНИМАНИЕ! КРИТИЧЕСКОЕ ПРАВИЛО:
-        Пользователь установил жесткие фильтры для поиска:
-        - География: {filters.geography if filters.geography else 'Любая'}
-        - Период: с {filters.year_from if filters.year_from else 'любого года'} по {filters.year_to if filters.year_to else 'любой год'}
-        
-        Если факты в базе знаний явно не относятся к указанной Географии или Периоду (или в них вообще нет дат/стран), ты ОБЯЗАН ответить 'Не знаю'. Игнорировать фильтры строго запрещено!
-        Если фактов недостаточно, также отвечай 'Не знаю'.
+        Постарайся ответить на вопрос, опираясь на факты. Учитывай фильтры, но если в тексте нет дат или стран, всё равно дай ответ по сути технологии или процесса.
+        Если фактов для ответа недостаточно, напиши: "Недостаточно данных в базе знаний для ответа."
 
         Факты:
         {context}
@@ -144,7 +112,7 @@ class SearchService:
             response = self.client.chat.completions.create(
                 model=self.model_uri,
                 messages=[
-                    {"role": "system", "content": "Ты эксперт-металлург. Отвечай кратко и по делу на основе предоставленных фактов."},
+                    {"role": "system", "content": "Ты эксперт-металлург. Отвечай кратко и по делу на основе предоставленных фактов. Обязательно указывай названия файлов, из которых берешь информацию."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
