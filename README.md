@@ -29,7 +29,7 @@
 - docker-compose.yml — поднимает postgres + neo4j + api + ui одной командой.
 
 Запуск:
-cp .env.example .env
+Создайте файл `.env` со своими секретами (можно взять за основу `.env.example`).
 docker compose up --build
 
 API: http://localhost:8000, UI: http://localhost:8501
