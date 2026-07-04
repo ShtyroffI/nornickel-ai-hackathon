@@ -14,6 +14,6 @@ class ReviewResponse(BaseModel):
     summary: str
     consensus: list[str]
     disagreements: list[str]
-    sources: list[str]
+    groups: dict[str, list[str]]
     sources_count: int
     confidence: float

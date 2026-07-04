@@ -23,7 +23,7 @@ def review(
         summary=result.get("summary", ""),
         consensus=result["consensus"],
         disagreements=result["disagreements"],
-        sources=result["sources"],
+        groups=result["groups"],
         sources_count=result["sources_count"],
         confidence=result["confidence"],
     )

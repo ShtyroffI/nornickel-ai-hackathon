@@ -56,28 +56,65 @@ class SearchService:
         if not keywords:
             return ""
 
-        # Build Cypher query to match any of the keywords
-        conditions = " OR ".join([f"toLower(n.name) CONTAINS $kw_{i}" for i in range(len(keywords))])
-        params = {f"kw_{i}": kw for i, kw in enumerate(keywords)}
-        
-        cypher = (
-            f"MATCH (n) WHERE {conditions} "
-            "WITH n LIMIT 5 "
-            f"MATCH path = (n)-[*0..{depth}]-(m) "
-            "UNWIND nodes(path) as node "
-            "RETURN DISTINCT node.name AS name, node.raw_text AS raw_text LIMIT 20"
-        )
         try:
-            results = self.driver.run(cypher, params)
             context_lines = []
-            for record in results:
+            
+            # 1. Сначала ищем в текстах публикаций по количеству совпавших ключевых слов
+            pub_cypher = (
+                "MATCH (p:Publication) "
+                "UNWIND $keywords AS kw "
+                "WITH p, kw WHERE toLower(p.raw_text) CONTAINS kw "
+                "WITH p, count(kw) AS score "
+                "ORDER BY score DESC LIMIT 3 "
+                "RETURN p.name AS name, p.raw_text AS raw_text"
+            )
+            pub_results = self.driver.run(pub_cypher, {"keywords": keywords})
+            
+            for record in pub_results:
                 name = record.get("name")
                 raw_text = record.get("raw_text")
                 if raw_text:
-                    # Limit raw text to avoid blowing up context window
-                    context_lines.append(f"Текст ({name}): {raw_text[:3000]}")
-                elif name:
-                    context_lines.append(f"Термин: {name}")
+                    # Ищем фрагменты (сниппеты) вокруг найденных ключевых слов
+                    snippets = []
+                    text_lower = raw_text.lower()
+                    
+                    # Сортируем слова по длине (сначала длинные), чтобы находить самые точные
+                    sorted_kws = sorted(keywords, key=len, reverse=True)
+                    
+                    for kw in sorted_kws:
+                        idx = text_lower.find(kw)
+                        if idx != -1:
+                            start = max(0, idx - 400)
+                            end = min(len(raw_text), idx + 400)
+                            snippet = raw_text[start:end]
+                            # Не добавляем, если фрагмент сильно пересекается с уже добавленными
+                            if not any(snippet[:100] in s or snippet[-100:] in s for s in snippets):
+                                snippets.append(snippet)
+                            if len(snippets) >= 4:
+                                break
+                    
+                    if snippets:
+                        joined_snippets = "\n... ".join(snippets)
+                        context_lines.append(f"Текст ({name}): ...{joined_snippets}...")
+                    else:
+                        context_lines.append(f"Текст ({name}): {raw_text[:2000]}")
+
+            # 2. Ищем связанные термины в графе (исключая публикации)
+            ent_cypher = (
+                "MATCH (n) "
+                "WHERE NOT n:Publication AND n.name IS NOT NULL "
+                "UNWIND $keywords AS kw "
+                "WITH n, kw WHERE toLower(n.name) CONTAINS kw "
+                "WITH n, count(kw) AS score "
+                "ORDER BY score DESC LIMIT 10 "
+                "RETURN n.name AS name"
+            )
+            ent_results = self.driver.run(ent_cypher, {"keywords": keywords})
+            for record in ent_results:
+                name = record.get("name")
+                if name:
+                    context_lines.append(f"Термин из графа: {name}")
+
             return "\n".join(context_lines)
         except Exception as e:
             logger.error("Ошибка при поиске в графе: %s", e)
